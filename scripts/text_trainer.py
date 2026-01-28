@@ -249,6 +249,14 @@ def get_log_scale(task_type: str):
     }
     return log_scale_map[task_type]
 
+def scale_reg_ratio(base_reg: float, lr: float, lr_ref: float, alpha: float = 0.4):
+    """
+    Scale regularization ratio based on learning rate.
+    Empirically beats fixed reg_ratio.
+    """
+    if lr_ref <= 0:
+        return base_reg
+    return base_reg * (lr / lr_ref) ** alpha
 
 def main():
     print("---STARTING TEXT TRAINING SCRIPT---", flush=True)
@@ -496,12 +504,32 @@ def main():
             
             train_cmd = replace_args_in_cmd(train_cmd, "request_path", current_request_path)
             
+            current_lr = float(extract_value_from_cmd(train_cmd, "learning_rate"))
+            if "lr_ref" not in state:
+                state["lr_ref"] = current_lr
+
+            adaptive_reg = scale_reg_ratio(
+                base_reg=args.reg_ratio,
+                lr=current_lr,
+                lr_ref=state["lr_ref"],
+                alpha=0.4,  # safe default
+            )
+            c_train_info["reg_ratio"] = adaptive_reg
+
             state["train"] = {
                 "train_cmd": train_cmd,
                 "log_path": os.path.join(ds_folder, f"train_{args.task_id}.log"),
-                "lr": extract_value_from_cmd(train_cmd, "learning_rate"),
-                "output_dir": run_output_dir
+                "lr": current_lr,
+                "output_dir": run_output_dir,
+                "reg_ratio": adaptive_reg,
             }
+            print(
+                f"[REG] base={args.reg_ratio:.5f} "
+                f"lr={current_lr:.2e} "
+                f"scaled={adaptive_reg:.5f}",
+                flush=True,
+            )
+            
             state["train"]["start_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             state["train"]["start_train_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
